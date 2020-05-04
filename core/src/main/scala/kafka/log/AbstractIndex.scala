@@ -43,6 +43,10 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
   // Length of the index file
   @volatile
   private var _length: Long = _
+  // 索引项大小
+  // 子类实现该方法时需要给定自己索引项的大小，
+  // 对于 OffsetIndex 而言，该值就是 8；在 OffsetIndex 中，位移值用 4 个字节来表示，物理磁盘位置也用 4 个字节来表示，所以总共是 8 个字节。
+  // 对于 TimeIndex 而言，该值是 12
   protected def entrySize: Int
 
   /*

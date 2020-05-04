@@ -359,13 +359,20 @@ class Log(@volatile private var _dir: File,
    * @return the old high watermark, if updated by the new value
    */
   def maybeIncrementHighWatermark(newHighWatermark: LogOffsetMetadata): Option[LogOffsetMetadata] = {
+    // 在maybeIncrementHighWatermark中会先去判断新的newHighWatermark.messageOffset是否大于当前的LEO，
+    // 如果大于肯定不合理，因为新的HW不可能跑在LEO前面
     if (newHighWatermark.messageOffset > logEndOffset)
       throw new IllegalArgumentException(s"High watermark $newHighWatermark update exceeds current " +
         s"log end offset $logEndOffsetMetadata")
 
     lock.synchronized {
+      // 然后获取当前高水位的偏移量和元数据。如果偏移元数据不是，已知，将在索引中执行查找并缓存结果，并赋值给oldHighWatermark。
       val oldHighWatermark = fetchHighWatermarkMetadata
 
+      // 最后进行判断
+      // 如果（oldHighWatermark.messageOffset小于newHighWatermark.messageOffset）
+      // 或者如果（oldHighWatermark.messageOffset 等于 newHighWatermark.messageOffset）并且当前segmentBaseOffset小于newHighWatermark.segmentBaseOffset
+      // 更新HW的元数据
       // Ensure that the high watermark increases monotonically. We also update the high watermark when the new
       // offset metadata is on a newer segment, which occurs whenever the log is rolled to a new segment.
       if (oldHighWatermark.messageOffset < newHighWatermark.messageOffset ||

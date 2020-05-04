@@ -20,6 +20,7 @@ package kafka.log
 import java.io.File
 import java.nio.ByteBuffer
 
+import kafka.common.IndexOffsetOverflowException
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.InvalidOffsetException
@@ -87,11 +88,15 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def lookup(targetOffset: Long): OffsetPosition = {
     maybeLock(lock) {
+      // 使用私有变量复制出整个索引映射区
       val idx = mmap.duplicate
+      // largestLowerBoundSlotFor方法底层使用了改进版的二分查找算法寻找对应的槽
       val slot = largestLowerBoundSlotFor(idx, targetOffset, IndexSearchType.KEY)
+      // 如果没找到，返回一个空的位置，即物理文件位置从0开始，表示从头读日志文件
       if(slot == -1)
         OffsetPosition(baseOffset, 0)
       else
+      // 否则返回slot槽对应的索引项
         parseEntry(idx, slot)
     }
   }
@@ -116,6 +121,11 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
 
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
+  /**
+   * 这里的 parseEntry 方法，就是要构造 OffsetPosition 所需的 Key 和 Value。。Key 是索引项中的完整位移值，
+   * 代码使用 baseOffset + relativeOffset(buffer, n) 的方式将相对位移值还原成完整位移值；
+   * Value 是这个位移值上消息在日志段文件中的物理位置，代码调用 physical 方法计算这个物理位置并把它作为 Value。
+   */
   override protected def parseEntry(buffer: ByteBuffer, n: Int): OffsetPosition = {
     OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
   }
@@ -140,13 +150,21 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def append(offset: Long, position: Int): Unit = {
     inLock(lock) {
+      // 索引文件如果已经写满，直接抛出异常
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
+      // 要保证待写入的位移值offset比当前索引文件中所有现存的位移值都要大
+      // 这主要是为了维护索引的单调增加性
       if (_entries == 0 || offset > _lastOffset) {
         trace(s"Adding index entry $offset => $position to ${file.getAbsolutePath}")
+        // 向mmap写入相对位移值
         mmap.putInt(relativeOffset(offset))
+        // 向mmap写入物理文件位置
         mmap.putInt(position)
+        // 更新索引项个数
         _entries += 1
+        // 更新当前索引文件最大位移值
         _lastOffset = offset
+        // 确保写入索引项格式符合要求
         require(_entries * entrySize == mmap.position(), s"$entries entries but file position in index is ${mmap.position()}.")
       } else {
         throw new InvalidOffsetException(s"Attempt to append an offset ($offset) to position $entries no larger than" +

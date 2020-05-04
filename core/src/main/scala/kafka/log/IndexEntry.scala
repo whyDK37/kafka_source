@@ -21,7 +21,14 @@ import org.apache.kafka.common.requests.ListOffsetResponse
 
 sealed trait IndexEntry {
   // We always use Long for both key and value to avoid boxing.
+  /**
+   * 位移值
+   */
   def indexKey: Long
+
+  /**
+   * 物理磁盘位置
+   */
   def indexValue: Long
 }
 
